@@ -1,10 +1,9 @@
 """
-Scraper de Convocatorias CAS para El Quipu PE
-=============================================
-Versión mejorada con:
-- Detección automática de la URL correcta de cada convocatoria
-- Detección inteligente del dominio de cada entidad
-- Logos con fallback a inicial coloreada
+Scraper de Convocatorias CAS para El Quipu PE - v2.0
+=====================================================
+Con detección exacta de:
+- URL específica de cada convocatoria (campo 'url')
+- Dominio real de cada entidad (desde enlace_entidad + mapa)
 """
 
 import os
@@ -15,9 +14,6 @@ from datetime import datetime
 from urllib.parse import urlparse
 
 
-# ============================================================
-# CONFIGURACIÓN
-# ============================================================
 API_KEY = os.environ.get('API_KEY')
 API_URL = 'https://convocatoriasestado.pe/api/v1/convocatorias/'
 BASE_URL = 'https://convocatoriasestado.pe'
@@ -31,180 +27,136 @@ print(f"🔑 API Key: {API_KEY[:15]}...")
 
 
 # ============================================================
-# DETECCIÓN INTELIGENTE DE URL
+# ✅ URL ESPECÍFICA DE LA CONVOCATORIA
+# La API devuelve el campo "url" con el path exacto.
+# Solo hay que agregar el dominio base.
 # ============================================================
-def extraer_url_convocatoria(c):
-    """
-    Busca la URL de la convocatoria en múltiples campos posibles.
-    Prueba en orden de prioridad.
-    """
-    # Campos posibles donde puede venir la URL específica
-    campos_posibles = ['url', 'enlace', 'link', 'enlace_convocatoria', 
-                       'url_convocatoria', 'permalink', 'detalle_url']
-    
-    for campo in campos_posibles:
-        valor = c.get(campo)
-        if valor and isinstance(valor, str) and valor.strip():
-            valor = valor.strip()
-            # Si es una URL relativa, agregar el dominio base
-            if valor.startswith('/'):
-                return BASE_URL + valor
-            # Si empieza con http, ya está completa
-            if valor.startswith('http'):
-                return valor
-    
-    # Si no encontramos URL específica, probar con enlace_entidad
-    enlace = c.get('enlace_entidad')
-    if enlace and isinstance(enlace, str):
-        return enlace
-    
-    return 'https://www.gob.pe/convocatorias-de-trabajo'
+def obtener_url_convocatoria(c):
+    url = c.get('url', '')
+    if url:
+        url = url.strip()
+        if url.startswith('/'):
+            return BASE_URL + url
+        if url.startswith('http'):
+            return url
+    # Fallback: página general de la entidad
+    return c.get('enlace_entidad', 'https://www.gob.pe/convocatorias-de-trabajo')
 
 
 # ============================================================
-# DETECCIÓN INTELIGENTE DE DOMINIO
+# ✅ DOMINIO REAL DE LA ENTIDAD
+# Estrategia:
+# 1. Extraer del subdominio de enlace_entidad (ej: practicantes.anin.gob.pe → anin.gob.pe)
+# 2. Extraer de la ruta de gob.pe (ej: gob.pe/ositran → ositran.gob.pe)
+# 3. Buscar en el mapa de entidades conocidas
 # ============================================================
-def extraer_dominio_entidad(c):
-    """
-    Intenta extraer el dominio real de la entidad desde
-    múltiples fuentes y construye la mejor URL de logo posible.
-    """
-    entidad = c.get('entidad', '').lower()
+MAPA_ENTIDADES = {
+    # Ministerios
+    'minsa': 'minsa.gob.pe', 'mef': 'mef.gob.pe', 'minedu': 'minedu.gob.pe',
+    'mininter': 'mininter.gob.pe', 'mindef': 'mindef.gob.pe',
+    'minjus': 'minjus.gob.pe', 'mtpe': 'trabajo.gob.pe',
+    'produce': 'produce.gob.pe', 'minem': 'minem.gob.pe',
+    'mtc': 'mtc.gob.pe', 'vivienda': 'vivienda.gob.pe',
+    'mimp': 'mimp.gob.pe', 'minam': 'minam.gob.pe',
+    'cultura': 'cultura.gob.pe', 'midis': 'midis.gob.pe',
+    'rree': 'rree.gob.pe', 'mincetur': 'mincetur.gob.pe',
+    'midagri': 'midagri.gob.pe', 'pcm': 'gob.pe',
     
-    # 1. Buscar en enlace_entidad
+    # Organismos autónomos
+    'sunat': 'sunat.gob.pe', 'sunarp': 'sunarp.gob.pe',
+    'reniec': 'reniec.gob.pe', 'onpe': 'onpe.gob.pe',
+    'jne': 'jne.gob.pe', 'contraloria': 'contraloria.gob.pe',
+    'servir': 'servir.gob.pe', 'sbs': 'sbs.gob.pe',
+    'bcrp': 'bcrp.gob.pe', 'sbn': 'sbn.gob.pe',
+    'senasa': 'senasa.gob.pe', 'oefa': 'oefa.gob.pe',
+    'sernanp': 'sernanp.gob.pe', 'senamhi': 'senamhi.gob.pe',
+    'inei': 'inei.gob.pe', 'indeci': 'indeci.gob.pe',
+    'cenepred': 'cenepred.gob.pe', 'ipd': 'ipd.gob.pe',
+    'inacal': 'inacal.gob.pe', 'promperu': 'promperu.gob.pe',
+    'proinversion': 'proinversion.gob.pe',
+    
+    # Poderes del Estado
+    'poder judicial': 'pj.gob.pe', 'congreso': 'congreso.gob.pe',
+    'fiscalia': 'mpfn.gob.pe', 'ministerio publico': 'mpfn.gob.pe',
+    'defensoria': 'defensoria.gob.pe', 'tribunal constitucional': 'tc.gob.pe',
+    
+    # Bancos
+    'banco de la nacion': 'bn.com.pe', 'agrobanco': 'agrobanco.com.pe',
+    'cofide': 'cofide.com.pe', 'fonafe': 'fonafe.gob.pe',
+    
+    # Infraestructura y transporte
+    'autoridad nacional de infraestructura': 'anin.gob.pe',
+    'anin': 'anin.gob.pe',
+    'ositran': 'ositran.gob.pe',
+    'sutran': 'sutran.gob.pe',
+    'osiptel': 'osiptel.gob.pe',
+    'osinergmin': 'osinergmin.gob.pe',
+    'osce': 'osce.gob.pe',
+    'oefa': 'oefa.gob.pe',
+    
+    # Otros
+    'essalud': 'essalud.gob.pe', 'senati': 'senati.edu.pe',
+    'pronabec': 'pronabec.gob.pe', 'sencico': 'sencico.gob.pe',
+    'sunedu': 'sunedu.gob.pe', 'indecopi': 'indecopi.gob.pe',
+    'perupetro': 'perupetro.com.pe', 'petroperu': 'petroperu.com.pe',
+    'sedapal': 'sedapal.com.pe', 'pronied': 'pronied.gob.pe',
+    'cofopri': 'cofopri.gob.pe', 'onp': 'onp.gob.pe',
+    'migraciones': 'migraciones.gob.pe', 'ana': 'ana.gob.pe',
+    'igp': 'igp.gob.pe', 'imarpe': 'imarpe.gob.pe',
+    'sanipes': 'sanipes.gob.pe', 'digesa': 'digesa.minsa.gob.pe',
+}
+
+
+def extraer_dominio(c):
+    """Extrae el dominio principal de la entidad."""
+    entidad_lower = (c.get('entidad') or '').lower()
+    
+    # 1. Buscar en el mapa por nombre de entidad (más confiable)
+    for clave, dominio in sorted(MAPA_ENTIDADES.items(), key=lambda x: -len(x[0])):
+        if clave in entidad_lower:
+            return dominio
+    
+    # 2. Extraer del enlace_entidad
     enlace = c.get('enlace_entidad', '')
-    if enlace and isinstance(enlace, str):
+    if enlace:
         try:
             if not enlace.startswith(('http://', 'https://')):
                 enlace = 'https://' + enlace
             parsed = urlparse(enlace)
-            hostname = (parsed.hostname or '').replace('www.', '')
+            hostname = (parsed.hostname or '').lower()
             
-            # Si es gob.pe, intentar extraer el slug de institución
-            if 'gob.pe' in hostname:
+            # Caso 1: subdominio.gob.pe (ej: practicantes.anin.gob.pe)
+            if hostname.endswith('.gob.pe') and hostname.count('.') >= 2:
+                partes = hostname.split('.')
+                # Tomar los últimos 3: ej [practicantes, anin, gob, pe] → anin.gob.pe
+                if len(partes) >= 3 and partes[-2] == 'gob' and partes[-1] == 'pe':
+                    return '.'.join(partes[-3:])
+            
+            # Caso 2: www.gob.pe/ositran (extraer de la ruta)
+            if hostname in ('www.gob.pe', 'gob.pe'):
                 path = parsed.path or ''
-                partes = [p for p in path.split('/') if p]
-                # Buscar patrón: /institucion/SLUG/...
-                if 'institucion' in partes:
-                    idx = partes.index('institucion')
-                    if idx + 1 < len(partes):
-                        slug = partes[idx + 1]
+                partes_path = [p for p in path.split('/') if p]
+                if 'institucion' in partes_path:
+                    idx = partes_path.index('institucion')
+                    if idx + 1 < len(partes_path):
+                        slug = partes_path[idx + 1]
                         return f'{slug}.gob.pe'
-                # Si el dominio no es solo gob.pe, usarlo
-                if hostname != 'gob.pe':
-                    return hostname
             
-            # Cualquier dominio válido con al menos 2 partes
-            if hostname and '.' in hostname:
-                return hostname
-        except Exception as e:
+            # Caso 3: dominio propio (ej: bn.com.pe, petroperu.com.pe)
+            if hostname and '.' in hostname and 'gob.pe' not in hostname:
+                return hostname.replace('www.', '')
+        except Exception:
             pass
-    
-    # 2. Mapa de entidades conocidas (ampliado)
-    mapa = {
-        'minsa': 'minsa.gob.pe',
-        'mef': 'mef.gob.pe',
-        'minedu': 'minedu.gob.pe',
-        'mininter': 'gob.pe',
-        'mindef': 'gob.pe',
-        'minjus': 'minjus.gob.pe',
-        'mtpe': 'gob.pe',
-        'produce': 'produce.gob.pe',
-        'minem': 'minem.gob.pe',
-        'mtc': 'mtc.gob.pe',
-        'vivienda': 'gob.pe',
-        'mimp': 'mimp.gob.pe',
-        'minam': 'minam.gob.pe',
-        'cultura': 'gob.pe',
-        'midis': 'midis.gob.pe',
-        'rree': 'rree.gob.pe',
-        'mincetur': 'mincetur.gob.pe',
-        'midagri': 'midagri.gob.pe',
-        'sunat': 'sunat.gob.pe',
-        'sunarp': 'sunarp.gob.pe',
-        'reniec': 'reniec.gob.pe',
-        'onpe': 'onpe.gob.pe',
-        'jne': 'jne.gob.pe',
-        'contraloria': 'contraloria.gob.pe',
-        'servir': 'servir.gob.pe',
-        'sbs': 'sbs.gob.pe',
-        'bcrp': 'bcrp.gob.pe',
-        'sbn': 'sbn.gob.pe',
-        'senasa': 'senasa.gob.pe',
-        'oefa': 'oefa.gob.pe',
-        'sernanp': 'sernanp.gob.pe',
-        'senamhi': 'senamhi.gob.pe',
-        'inei': 'inei.gob.pe',
-        'indeci': 'indeci.gob.pe',
-        'cenepred': 'cenepred.gob.pe',
-        'ipd': 'ipd.gob.pe',
-        'inacal': 'inacal.gob.pe',
-        'promperu': 'promperu.gob.pe',
-        'proinversion': 'proinversion.gob.pe',
-        'poder judicial': 'pj.gob.pe',
-        'congreso': 'congreso.gob.pe',
-        'fiscalia': 'mpfn.gob.pe',
-        'ministerio publico': 'mpfn.gob.pe',
-        'defensoria': 'defensoria.gob.pe',
-        'tribunal constitucional': 'tc.gob.pe',
-        'banco de la nacion': 'bn.com.pe',
-        'agrobanco': 'agrobanco.com.pe',
-        'cofide': 'cofide.com.pe',
-        'fonafe': 'fonafe.gob.pe',
-        'essalud': 'essalud.gob.pe',
-        'senati': 'senati.edu.pe',
-        'pronabec': 'pronabec.gob.pe',
-        'sencico': 'sencico.gob.pe',
-        'sunedu': 'sunedu.gob.pe',
-        'osinergmin': 'osinergmin.gob.pe',
-        'osiptel': 'osiptel.gob.pe',
-        'osce': 'osce.gob.pe',
-        'indecopi': 'indecopi.gob.pe',
-        'perupetro': 'perupetro.com.pe',
-        'petroperu': 'petroperu.com.pe',
-        'sedapal': 'sedapal.com.pe',
-        'ani': 'ani.gob.pe',
-        'ositran': 'ositran.gob.pe',
-        'attt': 'attt.gob.pe',
-        'autoridad nacional de infraestructura': 'ani.gob.pe',
-        'autoridad portuaria': 'gob.pe',
-        'sutran': 'sutran.gob.pe',
-        'ositran': 'ositran.gob.pe',
-        'pronied': 'pronied.gob.pe',
-        'pronaied': 'pronaied.gob.pe',
-        'fondo mi vivienda': 'gob.pe',
-        'cofopri': 'cofopri.gob.pe',
-        'onp': 'onp.gob.pe',
-        'fap': 'fap.mil.pe',
-        'ejercito': 'ejercito.mil.pe',
-        'marina': 'marina.mil.pe',
-        'pnp': 'pnp.gob.pe',
-        'migraciones': 'migraciones.gob.pe',
-        'ana': 'ana.gob.pe',
-        'ingemmet': 'ingemmet.gob.pe',
-        'igp': 'igp.gob.pe',
-        'impar': 'imarpe.gob.pe',
-        'itp': 'itp.gob.pe',
-        'sanipes': 'sanipes.gob.pe',
-        'digesa': 'digesa.minsa.gob.pe',
-        'digemid': 'digemid.minsa.gob.pe',
-    }
-    
-    for clave, dominio in mapa.items():
-        if clave in entidad:
-            return dominio
     
     return None
 
 
-# ============================================================
-# MAPEO DE NIVEL
-# ============================================================
 def mapear_nivel(texto):
     t = (texto or '').lower()
     if any(x in t for x in ['titulad', 'universitari', 'profesional', 'ingenier',
                             'abogad', 'médic', 'medic', 'contador', 'arquitect',
-                            'licenciad', 'doctor', 'químic', 'biólog', 'psicólog']):
+                            'licenciad', 'doctor', 'químic', 'biólog', 'psicólog',
+                            'derecho', 'practicante profesional']):
         return 'titulado'
     if 'bachiller' in t:
         return 'bachiller'
@@ -216,7 +168,7 @@ def mapear_nivel(texto):
 
 
 # ============================================================
-# CONSULTA A LA API
+# CONSULTAR LA API
 # ============================================================
 print(f"\n📡 Consultando la API...")
 
@@ -235,28 +187,20 @@ except Exception as e:
 
 
 # ============================================================
-# TRANSFORMACIÓN
+# TRANSFORMAR
 # ============================================================
 print(f"\n🔄 Transformando...")
 
 convocatorias = []
-con_logo = 0
-sin_logo = 0
+con_dominio = 0
 
 for c in resultados:
     entidad = c.get('entidad', 'Entidad Pública')
-    url_convocatoria = extraer_url_convocatoria(c)
-    dominio = extraer_dominio_entidad(c)
+    url_conv = obtener_url_convocatoria(c)
+    dominio = extraer_dominio(c)
     
-    # Logo: usar Clearbit (devuelve 404 si no existe → fallback a inicial)
-    # O usar favicon de Google como respaldo
-    logo_url = ''
     if dominio:
-        # Clearbit es más confiable para logos de empresas/organizaciones
-        logo_url = f'https://logo.clearbit.com/{dominio}'
-        con_logo += 1
-    else:
-        sin_logo += 1
+        con_dominio += 1
     
     region = c.get('departamento', 'Nacional')
     if region and len(region) > 30:
@@ -265,7 +209,6 @@ for c in resultados:
     convocatorias.append({
         'codigo': c.get('numero_convocatoria', 'CAS'),
         'entidad': entidad,
-        'logoUrl': logo_url,
         'dominio': dominio or '',
         'titulo': c.get('puesto', 'Puesto no especificado'),
         'descripcion': f"Convocatoria CAS publicada por {entidad}. {c.get('vacantes', 1)} vacante(s) disponible(s).",
@@ -276,18 +219,18 @@ for c in resultados:
         'vacantes': c.get('vacantes', 1) or 1,
         'publicacion': c.get('fecha_inicio', ''),
         'cierre': c.get('fecha_fin', ''),
-        'url': url_convocatoria,  # ← URL específica detectada
+        'url': url_conv,
         'vigente': c.get('vigente', True)
     })
 
 print(f"✅ {len(convocatorias)} transformadas")
-print(f"   Con dominio detectado: {con_logo}")
-print(f"   Sin dominio: {sin_logo}")
+print(f"🎯 Con dominio detectado: {con_dominio}")
+print(f"⚪ Sin dominio: {len(convocatorias) - con_dominio}")
 
-# Mostrar primeros 5 ejemplos de URLs para verificar
-print(f"\n📋 Muestra de URLs detectadas:")
+print(f"\n📋 Muestra de URLs y dominios:")
 for c in convocatorias[:5]:
-    print(f"   {c['entidad'][:40]} → {c['url'][:80]}")
+    print(f"   [{c['dominio'] or 'SIN DOMINIO'}] {c['entidad'][:30]}")
+    print(f"      → {c['url'][:90]}")
 
 
 # ============================================================
@@ -303,205 +246,5 @@ output = {
 with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
     json.dump(output, f, ensure_ascii=False, indent=2)
 
-print(f"\n💾 {OUTPUT_FILE} guardado con {len(convocatorias)} convocatorias")
+print(f"\n💾 {OUTPUT_FILE} guardado")
 print(f"✅ ¡Listo!\n")
-# ============================================================
-# MAPA DE DOMINIOS CONOCIDOS
-# Muchas veces "enlace_entidad" no tiene el dominio directo,
-# así que tenemos un mapa de las entidades más comunes.
-# ============================================================
-DOMINIOS_CONOCIDOS = {
-    # Ministerios
-    'minsa': 'minsa.gob.pe',
-    'mef': 'mef.gob.pe',
-    'minedu': 'minedu.gob.pe',
-    'mininter': 'gob.pe',
-    'mindef': 'gob.pe',
-    'minjus': 'minjus.gob.pe',
-    'mtpe': 'gob.pe',
-    'produce': 'produce.gob.pe',
-    'minem': 'minem.gob.pe',
-    'mtc': 'mtc.gob.pe',
-    'vivienda': 'gob.pe',
-    'mimp': 'mimp.gob.pe',
-    'minam': 'minam.gob.pe',
-    'cultura': 'gob.pe',
-    'midis': 'midis.gob.pe',
-    'rree': 'rree.gob.pe',
-    'mincetur': 'mincetur.gob.pe',
-    'midagri': 'midagri.gob.pe',
-    'pcm': 'gob.pe',
-    
-    # Organismos
-    'sunat': 'sunat.gob.pe',
-    'sunarp': 'sunarp.gob.pe',
-    'reniec': 'reniec.gob.pe',
-    'onpe': 'onpe.gob.pe',
-    'jne': 'jne.gob.pe',
-    'onpe': 'onpe.gob.pe',
-    'contraloria': 'contraloria.gob.pe',
-    'servir': 'servir.gob.pe',
-    'sbs': 'sbs.gob.pe',
-    'bcrp': 'bcrp.gob.pe',
-    'sbn': 'sbn.gob.pe',
-    'senasa': 'senasa.gob.pe',
-    'oefa': 'oefa.gob.pe',
-    'sernanp': 'sernanp.gob.pe',
-    'senamhi': 'senamhi.gob.pe',
-    'inei': 'inei.gob.pe',
-    'indeci': 'indeci.gob.pe',
-    'cenepred': 'cenepred.gob.pe',
-    'ipd': 'ipd.gob.pe',
-    'inacal': 'inacal.gob.pe',
-    'promperu': 'promperu.gob.pe',
-    'proinversion': 'proinversion.gob.pe',
-    
-    # Poderes
-    'poder judicial': 'pj.gob.pe',
-    'pj': 'pj.gob.pe',
-    'congreso': 'congreso.gob.pe',
-    'ministerio publico': 'mpfn.gob.pe',
-    'fiscalia': 'mpfn.gob.pe',
-    'defensoria': 'defensoria.gob.pe',
-    'tribunal constitucional': 'tc.gob.pe',
-    
-    # Bancos y otros
-    'banco de la nacion': 'bn.com.pe',
-    'bn': 'bn.com.pe',
-    'agrobanco': 'agrobanco.com.pe',
-    'cofide': 'cofide.com.pe',
-    'fonafe': 'fonafe.gob.pe',
-    
-    # Otros conocidos
-    'essalud': 'essalud.gob.pe',
-    'senati': 'senati.edu.pe',
-    'pronabec': 'pronabec.gob.pe',
-    'sencico': 'sencico.gob.pe',
-    'sunedu': 'sunedu.gob.pe',
-    'osinergmin': 'osinergmin.gob.pe',
-    'osiptel': 'osiptel.gob.pe',
-    'osce': 'osce.gob.pe',
-    'indecopi': 'indecopi.gob.pe',
-    'perupetro': 'perupetro.com.pe',
-    'petroperu': 'petroperu.com.pe',
-    'enapu': 'enapu.com.pe',
-    'sedapal': 'sedapal.com.pe',
-    'luz del sur': 'luzdelsur.com.pe',
-    'enel': 'enel.pe',
-    'electroperu': 'electroperu.com.pe',
-}
-
-
-def buscar_dominio(entidad, url_enlace):
-    """
-    Busca el dominio de una entidad siguiendo este orden:
-    1. Extraer de la URL del enlace (si existe)
-    2. Buscar en el diccionario de dominios conocidos
-    3. Devolver None si no se encuentra
-    """
-    # 1. Intentar extraer de la URL real
-    dominio = extraer_dominio(url_enlace)
-    if dominio and '.gob.pe' in dominio or (dominio and '.com.pe' in dominio):
-        return dominio
-    
-    # 2. Buscar en el diccionario
-    entidad_lower = (entidad or '').lower()
-    for clave, dom in DOMINIOS_CONOCIDOS.items():
-        if clave in entidad_lower:
-            return dom
-    
-    # 3. Si la URL tiene algún dominio válido, usarlo
-    if dominio:
-        return dominio
-    
-    return None
-
-
-# ============================================================
-# CONSULTAR LA API
-# ============================================================
-print(f"\n📡 Consultando la API...")
-
-params = {'vigentes': 'true', 'por_pagina': '100'}
-headers = {
-    'Authorization': f'Bearer {API_KEY}',
-    'Accept': 'application/json'
-}
-
-try:
-    response = requests.get(API_URL, params=params, headers=headers, timeout=30)
-    response.raise_for_status()
-    data = response.json()
-    resultados = data.get('resultados', [])
-    print(f"✅ {len(resultados)} convocatorias recibidas")
-except Exception as e:
-    print(f"❌ Error: {e}")
-    sys.exit(1)
-
-
-# ============================================================
-# TRANSFORMAR DATOS
-# ============================================================
-print(f"\n🔄 Transformando datos...")
-
-convocatorias = []
-con_logo = 0
-sin_logo = 0
-
-for c in resultados:
-    entidad = c.get('entidad', 'Entidad Pública')
-    url_enlace = c.get('enlace_entidad') or c.get('url') or ''
-    
-    # Buscar el dominio
-    dominio = buscar_dominio(entidad, url_enlace)
-    
-    # Generar URL del logo
-    logo_url = ''
-    if dominio:
-        logo_url = f'https://www.google.com/s2/favicons?domain={dominio}&sz=128'
-        con_logo += 1
-    else:
-        sin_logo += 1
-    
-    region = c.get('departamento', 'Nacional')
-    if region and len(region) > 30:
-        region = region[:30]
-    
-    convocatorias.append({
-        'codigo': c.get('numero_convocatoria', 'CAS'),
-        'entidad': entidad,
-        'logoUrl': logo_url,
-        'dominio': dominio or '',
-        'titulo': c.get('puesto', 'Puesto no especificado'),
-        'descripcion': f"Convocatoria CAS publicada por {entidad}. {c.get('vacantes', 1)} vacante(s) disponible(s).",
-        'region': region,
-        'nivel': mapear_nivel(c.get('puesto', '')),
-        'sueldoMin': c.get('remuneracion', 0) or 0,
-        'sueldoMax': c.get('remuneracion', 0) or 0,
-        'vacantes': c.get('vacantes', 1) or 1,
-        'publicacion': c.get('fecha_inicio', ''),
-        'cierre': c.get('fecha_fin', ''),
-        'url': url_enlace or 'https://www.gob.pe',
-        'vigente': c.get('vigente', True)
-    })
-
-print(f"✅ {len(convocatorias)} convocatorias transformadas")
-print(f"   🎨 Con logo: {con_logo}")
-print(f"   ⚪ Sin logo: {sin_logo}")
-
-
-# ============================================================
-# GUARDAR JSON
-# ============================================================
-output = {
-    'actualizado': datetime.now().isoformat(),
-    'fuente': 'convocatoriasestado.pe',
-    'total': len(convocatorias),
-    'convocatorias': convocatorias
-}
-
-with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
-    json.dump(output, f, ensure_ascii=False, indent=2)
-
-print(f"\n💾 Guardado: {OUTPUT_FILE}")
-print(f"✅ ¡Todo listo!\n")
