@@ -1,7 +1,8 @@
 """
-Scraper de Convocatorias CAS para El Quipu PE - v3.0
+Scraper de Convocatorias CAS para El Quipu PE - v4.0
 =====================================================
-URL específica correcta + sin logos (para diseño limpio)
+✅ URL hacia la FUENTE OFICIAL (enlace_entidad)
+✅ Sin logos (diseño limpio)
 """
 
 import os
@@ -13,7 +14,6 @@ from datetime import datetime
 
 API_KEY = os.environ.get('API_KEY')
 API_URL = 'https://convocatoriasestado.pe/api/v1/convocatorias/'
-BASE_URL = 'https://convocatoriasestado.pe'
 OUTPUT_FILE = 'convocatorias.json'
 
 if not API_KEY:
@@ -23,36 +23,6 @@ if not API_KEY:
 print(f"🔑 API Key: {API_KEY[:15]}...")
 
 
-# ============================================================
-# ✅ URL ESPECÍFICA DE LA CONVOCATORIA
-# ============================================================
-def obtener_url_convocatoria(c):
-    """
-    Construye la URL exacta de la convocatoria.
-    La API devuelve: "url": "/convocatoria/18840-practicante-profesional/"
-    Resultado: "https://convocatoriasestado.pe/convocatoria/18840-practicante-profesional/"
-    """
-    url = c.get('url', '')
-    
-    if url:
-        url = url.strip()
-        # Path relativo → agregar dominio base
-        if url.startswith('/'):
-            url_final = BASE_URL + url
-            print(f"   ✅ URL construida: {url_final[:80]}")
-            return url_final
-        # URL absoluta → devolver tal cual
-        if url.startswith('http'):
-            return url
-    
-    # Fallback: enlace de la entidad (página general)
-    print(f"   ⚠️ Sin campo 'url', usando enlace_entidad")
-    return c.get('enlace_entidad', 'https://www.gob.pe/convocatorias-de-trabajo')
-
-
-# ============================================================
-# MAPEO DE NIVEL
-# ============================================================
 def mapear_nivel(texto):
     t = (texto or '').lower()
     if any(x in t for x in ['titulad', 'universitari', 'profesional', 'ingenier',
@@ -89,22 +59,32 @@ except Exception as e:
 
 
 # ============================================================
-# TRANSFORMAR
+# TRANSFORMAR — USA enlace_entidad COMO URL PRINCIPAL
 # ============================================================
-print(f"\n🔄 Transformando primeras 3 para verificar URLs:")
-print(f"{'='*70}")
+print(f"\n🔄 Transformando...")
 
 convocatorias = []
+con_oficial = 0
+sin_oficial = 0
 
-for i, c in enumerate(resultados):
+for c in resultados:
     entidad = c.get('entidad', 'Entidad Pública')
     
-    # Mostrar las primeras 3 URLs para verificar
-    if i < 3:
-        print(f"\n#{i+1} {entidad[:40]}")
-        print(f"   url (API): {c.get('url', 'NO TIENE')}")
+    # 🎯 PRIORIDAD: enlace_entidad (fuente oficial)
+    url_oficial = c.get('enlace_entidad', '').strip()
     
-    url_conv = obtener_url_convocatoria(c)
+    # Fallback: si no hay enlace_entidad, usar el url de la API
+    if not url_oficial:
+        url_api = c.get('url', '')
+        if url_api.startswith('/'):
+            url_oficial = 'https://convocatoriasestado.pe' + url_api
+        elif url_api.startswith('http'):
+            url_oficial = url_api
+        else:
+            url_oficial = 'https://www.gob.pe/convocatorias-de-trabajo'
+        sin_oficial += 1
+    else:
+        con_oficial += 1
     
     region = c.get('departamento', 'Nacional')
     if region and len(region) > 30:
@@ -122,17 +102,19 @@ for i, c in enumerate(resultados):
         'vacantes': c.get('vacantes', 1) or 1,
         'publicacion': c.get('fecha_inicio', ''),
         'cierre': c.get('fecha_fin', ''),
-        'url': url_conv,  # ← URL específica
+        'url': url_oficial,  # ← URL OFICIAL DE LA ENTIDAD
         'vigente': c.get('vigente', True)
     })
 
-print(f"\n{'='*70}")
-print(f"✅ {len(convocatorias)} convocatorias transformadas")
+print(f"✅ {len(convocatorias)} transformadas")
+print(f"🎯 Con enlace oficial: {con_oficial}")
+print(f"⚠️  Sin enlace oficial (fallback): {sin_oficial}")
 
-# Verificar URLs guardadas
-print(f"\n📋 Muestra de URLs guardadas:")
-for c in convocatorias[:3]:
-    print(f"   {c['url']}")
+print(f"\n📋 Muestra de URLs (deben ir a .gob.pe de cada entidad):")
+print(f"{'='*70}")
+for c in convocatorias[:5]:
+    print(f"   {c['entidad'][:35]}")
+    print(f"   → {c['url']}")
 
 
 # ============================================================
@@ -148,5 +130,5 @@ output = {
 with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
     json.dump(output, f, ensure_ascii=False, indent=2)
 
-print(f"\n💾 {OUTPUT_FILE} guardado con URLs específicas")
+print(f"\n💾 {OUTPUT_FILE} guardado")
 print(f"✅ ¡Listo!\n")
