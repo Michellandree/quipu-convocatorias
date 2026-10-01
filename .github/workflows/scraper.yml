@@ -2,9 +2,8 @@ name: Scraper Convocatorias CAS
 
 on:
   schedule:
-    # 6 AM hora Perú (11:00 UTC)
     - cron: '0 11 * * *'
-  workflow_dispatch:  # Permite ejecutarlo manualmente también
+  workflow_dispatch:
 
 jobs:
   scraping:
@@ -14,30 +13,25 @@ jobs:
       contents: write
     
     steps:
-      - name: 📥 Checkout del repositorio
+      - name: 📥 Checkout
         uses: actions/checkout@v4
       
-      - name: 🐍 Configurar Python 3.12
+      - name: 🐍 Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       
-      - name: 📦 Instalar dependencias
+      - name: 📦 Dependencias
         run: |
           python -m pip install --upgrade pip
           pip install requests
       
-      - name: 🚀 Ejecutar scraper
+      - name: 🚀 Scraper
         env:
           API_KEY: ${{ secrets.API_KEY }}
         run: python scraper.py
-
-      - name: 🔍 Diagnóstico
-        env:
-          API_KEY: ${{ secrets.API_KEY }}
-        run: python diagnostico.py
       
-      - name: 💾 Guardar JSON en el repositorio
+      - name: 💾 Guardar JSON
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
