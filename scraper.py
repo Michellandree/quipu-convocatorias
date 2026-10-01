@@ -1,8 +1,9 @@
 """
-Scraper de Convocatorias CAS para El Quipu PE - v4.0
+Scraper de Convocatorias CAS para El Quipu PE - v4.1
 =====================================================
+✅ Maneja valores None/null correctamente
 ✅ URL hacia la FUENTE OFICIAL (enlace_entidad)
-✅ Sin logos (diseño limpio)
+✅ Fallback robusto
 """
 
 import os
@@ -51,7 +52,7 @@ try:
     response = requests.get(API_URL, params=params, headers=headers, timeout=30)
     response.raise_for_status()
     data = response.json()
-    resultados = data.get('resultados', [])
+    resultados = data.get('resultados', []) or []
     print(f"✅ {len(resultados)} convocatorias recibidas")
 except Exception as e:
     print(f"❌ Error: {e}")
@@ -59,62 +60,80 @@ except Exception as e:
 
 
 # ============================================================
-# TRANSFORMAR — USA enlace_entidad COMO URL PRINCIPAL
+# TRANSFORMAR
 # ============================================================
 print(f"\n🔄 Transformando...")
 
 convocatorias = []
 con_oficial = 0
-sin_oficial = 0
+con_api = 0
+sin_url = 0
 
 for c in resultados:
-    entidad = c.get('entidad', 'Entidad Pública')
+    entidad = (c.get('entidad') or 'Entidad Pública').strip()
     
-    # 🎯 PRIORIDAD: enlace_entidad (fuente oficial)
-    url_oficial = c.get('enlace_entidad', '').strip()
+    # 🎯 ESTRATEGIA DE URL EN CASCADA:
+    # 1. enlace_entidad (fuente oficial - página de la entidad)
+    # 2. url (convocatoria específica en el agregador)
+    # 3. Fallback genérico
     
-    # Fallback: si no hay enlace_entidad, usar el url de la API
-    if not url_oficial:
-        url_api = c.get('url', '')
-        if url_api.startswith('/'):
-            url_oficial = 'https://convocatoriasestado.pe' + url_api
-        elif url_api.startswith('http'):
-            url_oficial = url_api
-        else:
-            url_oficial = 'https://www.gob.pe/convocatorias-de-trabajo'
-        sin_oficial += 1
-    else:
+    url_oficial = (c.get('enlace_entidad') or '').strip()
+    
+    if url_oficial and url_oficial.startswith(('http://', 'https://')):
+        # ✅ Tenemos enlace oficial
+        url_final = url_oficial
         con_oficial += 1
+        origen = 'oficial'
+    else:
+        # Fallback: usar el campo url de la API
+        url_api = (c.get('url') or '').strip()
+        
+        if url_api.startswith('/'):
+            url_final = 'https://convocatoriasestado.pe' + url_api
+            con_api += 1
+            origen = 'api'
+        elif url_api.startswith('http'):
+            url_final = url_api
+            con_api += 1
+            origen = 'api'
+        else:
+            url_final = 'https://www.gob.pe/convocatorias-de-trabajo'
+            sin_url += 1
+            origen = 'fallback'
     
-    region = c.get('departamento', 'Nacional')
-    if region and len(region) > 30:
+    region = (c.get('departamento') or 'Nacional').strip()
+    if len(region) > 30:
         region = region[:30]
     
+    puesto = (c.get('puesto') or 'Puesto no especificado').strip()
+    
     convocatorias.append({
-        'codigo': c.get('numero_convocatoria', 'CAS'),
+        'codigo': c.get('numero_convocatoria') or 'CAS',
         'entidad': entidad,
-        'titulo': c.get('puesto', 'Puesto no especificado'),
+        'titulo': puesto,
         'descripcion': f"Convocatoria publicada por {entidad}. {c.get('vacantes', 1)} vacante(s) disponible(s).",
         'region': region,
-        'nivel': mapear_nivel(c.get('puesto', '')),
-        'sueldoMin': c.get('remuneracion', 0) or 0,
-        'sueldoMax': c.get('remuneracion', 0) or 0,
-        'vacantes': c.get('vacantes', 1) or 1,
-        'publicacion': c.get('fecha_inicio', ''),
-        'cierre': c.get('fecha_fin', ''),
-        'url': url_oficial,  # ← URL OFICIAL DE LA ENTIDAD
+        'nivel': mapear_nivel(puesto),
+        'sueldoMin': c.get('remuneracion') or 0,
+        'sueldoMax': c.get('remuneracion') or 0,
+        'vacantes': c.get('vacantes') or 1,
+        'publicacion': c.get('fecha_inicio') or '',
+        'cierre': c.get('fecha_fin') or '',
+        'url': url_final,
         'vigente': c.get('vigente', True)
     })
 
-print(f"✅ {len(convocatorias)} transformadas")
-print(f"🎯 Con enlace oficial: {con_oficial}")
-print(f"⚠️  Sin enlace oficial (fallback): {sin_oficial}")
+print(f"✅ {len(convocatorias)} convocatorias transformadas")
+print(f"🎯 Con enlace oficial (fuente .gob.pe): {con_oficial}")
+print(f"🔗 Con URL de la API: {con_api}")
+print(f"⚠️  Sin URL (fallback): {sin_url}")
 
-print(f"\n📋 Muestra de URLs (deben ir a .gob.pe de cada entidad):")
+print(f"\n📋 Muestra de URLs finales:")
 print(f"{'='*70}")
 for c in convocatorias[:5]:
-    print(f"   {c['entidad'][:35]}")
+    print(f"   {c['entidad'][:38]}")
     print(f"   → {c['url']}")
+    print()
 
 
 # ============================================================
@@ -130,5 +149,5 @@ output = {
 with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
     json.dump(output, f, ensure_ascii=False, indent=2)
 
-print(f"\n💾 {OUTPUT_FILE} guardado")
+print(f"💾 {OUTPUT_FILE} guardado")
 print(f"✅ ¡Listo!\n")
